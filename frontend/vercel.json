@@ -1,0 +1,11 @@
+{
+  "rewrites": [
+    {
+      "source": "/app/:match*",
+      "destination": "/index.html"
+    }
+  ],
+  "routes": [
+    { "src": "/(.*)", "headers": { "Cache-Control": "s-maxage=1, stale-while-revalidate" } }
+  ]
+}
