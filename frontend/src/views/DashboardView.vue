@@ -514,6 +514,7 @@ const sortedCompanies = computed(() => {
 })
 
 async function fetchReport() {
+    console.log(import.meta.env)
     if (!selectedMonth.value || !selectedYear.value) return
     loading.value = true
     error.value = null
