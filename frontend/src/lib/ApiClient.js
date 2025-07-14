@@ -2,7 +2,7 @@ import axios from 'axios'
 import { supabase } from './supabase'
 
 export const api = axios.create({
-    baseURL: "https://cloverinternalapp.onrender.com",
+    baseURL: import.meta.env.VITE_API_BASE || `https://cloverinternalapp.onrender.com`,
 })
 
 api.interceptors.request.use(async (config) => {
