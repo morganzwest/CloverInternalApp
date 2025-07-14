@@ -15,6 +15,7 @@ app = FastAPI()
 
 origins = [
     "http://localhost:5173",
+    "https://clover-internal-a5jsm8esk-flowsight.vercel.app/",
 ]
 app.add_middleware(
     CORSMiddleware,
