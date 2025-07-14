@@ -1,9 +1,8 @@
 <!-- src/components/ClientDrawer.vue -->
 <template>
     <transition name="slide">
-        <aside v-if="visible" class="fixed top-0 right-0 h-full bg-white shadow-xl overflow-auto"
-            :style="{ width: '80vw', maxWidth: '600px' }" role="dialog" aria-modal="true"
-            aria-labelledby="drawer-title">
+        <aside v-if="visible" class="fixed top-0 right-0 bg-white shadow-xl overflow-auto h-screen w-1/2" role="dialog"
+            aria-modal="true" aria-labelledby="drawer-title">
             <header class="flex items-center justify-between p-4 border-b">
                 <h2 id="drawer-title" class="text-xl font-semibold">{{ title }}</h2>
                 <button @click="$emit('close')" aria-label="Close drawer" class="p-2">

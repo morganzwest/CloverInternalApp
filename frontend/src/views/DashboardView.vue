@@ -144,7 +144,7 @@
                     <div v-else-if="details && details.total_time != null" class="space-y-6">
 
                         <!-- Overview -->
-                        <div class="bg-white rounded-lg shadow-sm">
+                        <div class="bg-white rounded-lg">
                             <h3 class="text-lg font-semibold mb-2">Overview</h3>
                             <table class="w-full text-sm">
                                 <tbody>
@@ -171,7 +171,7 @@
                         </div>
 
                         <!-- Monthly Breakdown -->
-                        <div class="bg-white rounded-lg shadow-sm">
+                        <div class="bg-white rounded-lg">
                             <h3 class="text-lg font-semibold mb-2">Monthly Breakdown</h3>
                             <table class="w-full text-sm">
                                 <thead>
@@ -183,32 +183,68 @@
                                 <tbody>
                                     <tr v-for="(hrs, idx) in details.period_totals || []" :key="idx"
                                         :class="idx % 2 === 0 ? '' : 'bg-gray-50'">
-                                        <td class="py-1 px-2">Month {{ idx + 1 }}</td>
+                                        <td class="py-1 px-2">
+                                            {{ periodLabels[idx] || `Month ${idx + 1}` }}
+                                        </td>
                                         <td class="py-1 px-2 text-right">{{ hrs.toFixed(1) }} hrs</td>
                                     </tr>
                                 </tbody>
+
+
                             </table>
                         </div>
 
                         <!-- Entries This Period -->
-                        <div v-if="details.current_period_logs?.length" class="bg-white rounded-lg shadow-sm">
+                        <div v-if="loadingEntries" class="text-gray-500">Loading entries…</div>
+                        <div v-else-if="entriesError" class="text-red-600">{{ entriesError }}</div>
+                        <div v-else-if="entryDetails.length" class="bg-white rounded-lg">
                             <h3 class="text-lg font-semibold mb-2">Entries This Period</h3>
-                            <div class="max-h-48 overflow-y-auto border border-gray-200 rounded">
-                                <ul class="divide-y divide-gray-100">
-                                    <li v-for="id in details.current_period_logs" :key="id" class="px-2 py-1 text-xs">
-                                        {{ id }}
-                                    </li>
-                                </ul>
+
+                            <!-- scroll wrapper: max height 16rem (64), adjust as needed -->
+                            <div class="max-h-64 overflow-y-auto">
+                                <table class="w-full text-sm text-left">
+                                    <thead class="bg-gray-100 sticky top-0">
+                                        <tr>
+                                            <th class="px-2 py-1">Description</th>
+                                            <th class="px-2 py-1">Start</th>
+                                            <th class="px-2 py-1">End</th>
+                                            <th class="px-2 py-1 text-right">Hours</th>
+                                            <th class="px-2 py-1">Tag</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100">
+                                        <tr v-for="e in entryDetails" :key="e.id" class="even:bg-gray-50">
+                                            <td class="px-2 py-1 break-words">{{ truncate(e.description, 30) }}</td>
+                                            <td class="px-2 py-1">{{ formatShort(e.start_time) }}</td>
+                                            <td class="px-2 py-1">{{ formatShort(e.end_time) }}</td>
+                                            <td class="px-2 py-1 text-right">{{ formatHoursToHhmm(e.hours) }}</td>
+                                            <td class="px-2 py-1">{{ e.tag }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
+                        <div v-else class="text-gray-500">No entries this period.</div>
+
 
                         <!-- PDF Download -->
                         <div class="text-right">
-                            <a v-if="pdfUrl" :href="pdfUrl" target="_blank"
-                                class="inline-block mt-4 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700">
-                                Download Detailed PDF
-                            </a>
+                            <button @click="downloadPdf" :disabled="pdfLoading"
+                                class="inline-flex items-center px-3 py-2 text-sm font-medium text-white rounded-md focus:ring-4 focus:ring-emerald-300"
+                                :class="pdfLoading
+                                    ? 'bg-gray-400 cursor-not-allowed'
+                                    : 'bg-emerald-600 hover:bg-emerald-700'">
+                                <svg v-if="pdfLoading" class="animate-spin mr-2 h-5 w-5 text-white"
+                                    xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                        stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                                </svg>
+                                <span v-if="!pdfLoading">Download Detailed PDF</span>
+                                <span v-else>Generating...</span>
+                            </button>
                         </div>
+
                     </div>
                     <div v-else class="text-gray-500">No details to show.</div>
                 </template>
@@ -222,10 +258,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import AppWrapper from './AppWrapper.vue'
 import ClientDrawer from '../components/ClientDrawer.vue'
 import { api } from '../lib/ApiClient'
+import { saveAs } from 'file-saver'
 
 // Calculate default previous month
 const now = new Date()
@@ -238,6 +275,58 @@ const companies = ref([])
 const loading = ref(false)
 const error = ref(null)
 const exemptTravel = ref(true)
+
+function formatShort(dtString) {
+    const d = new Date(dtString)
+    const dd = String(d.getDate()).padStart(2, '0')
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mi = String(d.getMinutes()).padStart(2, '0')
+    return `${dd}/${mm}, ${hh}:${mi}`
+}
+function formatHoursToHhmm(decimalHours = 0) {
+    const totalMinutes = Math.round(decimalHours * 60)
+    const h = Math.floor(totalMinutes / 60)
+    const m = totalMinutes % 60
+    return `${h}:${String(m).padStart(2, '0')}`
+}
+
+const pdfLoading = ref(false)
+async function downloadPdf() {
+    if (!selectedCompany.value) return
+    pdfLoading.value = true
+    const params = {
+        period: `${selectedMonth.value}-${selectedYear.value}`,
+        months: selectedNumPeriods.value,
+        entry_type: 'Retained',
+        ...(exemptTravel.value && { exclude_tag: 'Allowable travel time' })
+    }
+    try {
+        const response = await api.get(
+            `/reports/pdf/${selectedCompany.value.company_id}`,
+            {
+                params,
+                responseType: 'blob'
+            }
+        )
+        // option A: use file-saver
+        saveAs(response.data, `company_${selectedCompany.value.company_id}_report.pdf`)
+        pdfLoading.value = false
+        // option B: manually create a download link:
+        // const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+        // const link = document.createElement('a')
+        // link.href = url
+        // link.setAttribute('download', `company_${selectedCompany.value.company_id}_report.pdf`)
+        // document.body.appendChild(link)
+        // link.click()
+        // document.body.removeChild(link)
+        // window.URL.revokeObjectURL(url)
+    } catch (err) {
+        console.error('PDF download failed', err)
+        // you can show a notification here
+        pdfLoading.value = true
+    }
+}
 
 // Selectors
 const months = Array.from({ length: 12 }, (_, i) => ({ label: String(i + 1).padStart(2, '0'), value: String(i + 1).padStart(2, '0') }))
@@ -254,6 +343,7 @@ const pdfUrl = ref('')
 const selectedCompany = ref(null)
 const drawerVisible = ref(false)
 
+
 function openDrawer(company) {
     selectedCompany.value = company
     drawerVisible.value = true
@@ -264,6 +354,52 @@ function closeDrawer() {
     drawerVisible.value = false
     selectedCompany.value = null
 }
+
+const entryDetails = ref([])
+const loadingEntries = ref(false)
+const entriesError = ref(null)
+
+/**
+ * Round a number to `n` decimal places.
+ */
+function roundDecimals(num, n = 1) {
+    return Number(num).toFixed(n)
+}
+
+/**
+ * Truncate a string to `max` chars, adding “…” if it was longer.
+ */
+function truncate(text = '', max = 30) {
+    return text.length > max ? text.slice(0, max) + '…' : text
+}
+
+async function fetchEntryDetails(ids = []) {
+    if (!ids.length) {
+        entryDetails.value = []
+        return
+    }
+
+    loadingEntries.value = true
+    entriesError.value = null
+    try {
+        // uses ?ids=uuid1&ids=uuid2…
+        const { data } = await api.get('/reports/time-entry-detail', {
+            params: { ids }
+        })
+        entryDetails.value = data
+    } catch (err) {
+        entriesError.value = err.response?.data?.message || err.message
+    } finally {
+        loadingEntries.value = false
+    }
+}
+
+watch(
+    () => details.value.current_period_logs,
+    (newIds) => {
+        fetchEntryDetails(newIds || [])
+    }
+)
 
 async function fetchDetails(company) {
     loadingDetails.value = true
@@ -305,6 +441,17 @@ const eligible = computed(() =>
         item.monthVariation > 0 && item.totalVariation > 0
     )
 )
+
+const periodLabels = computed(() => {
+    return (details.value.periods || []).map(([, endIso]) => {
+        const d = new Date(endIso)
+        return d.toLocaleString('en-GB', {
+            month: 'long',
+            year: 'numeric'
+        })
+    })
+})
+
 
 const filteredCompanies = computed(() => {
     const q = searchQuery.value.trim().toLowerCase()

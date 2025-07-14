@@ -10,31 +10,29 @@ from fastapi import BackgroundTasks
 from fastapi.responses import StreamingResponse
 from app.services.pdf_service import ReportsService
 import io
+from httpx import RemoteProtocolError
+from typing import Optional, List
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
-def build_windows(period: str, count: int):
-    """
-    Returns a list of (start_date: date, end_date: date) tuples,
-    oldest→newest, each covering the 26th→25th monthly window.
-    """
-    return [
-        tuple(map(parse_date, get_period_range(period, offset)))
-        for offset in range(count - 1, -1, -1)
-    ]
-
-
 def get_period_range(month_year: str, offset: int = 0):
     """
-    Returns (start_iso, end_iso) for a custom monthly window: 26th to 25th.
+    Returns (start_iso, end_iso) for a custom monthly window: 
+    26th 00:00:00 → 25th 23:59:59 UTC.
     """
-    base = datetime.strptime(
-        f"01-{month_year}", "%d-%m-%Y") - relativedelta(months=1)
-    adjusted = base - relativedelta(months=offset)
-    start = adjusted.replace(day=26)
-    end = (start + relativedelta(months=1)).replace(day=25)
-    return start.date().isoformat(), end.date().isoformat()
+    # Anchor on the 1st of MM-YYYY, back one month + offset
+    anchor = datetime.strptime(f"01-{month_year}", "%d-%m-%Y")
+    base = anchor - relativedelta(months=1 + offset)
+    # Start on the 26th at 00:00 UTC
+    start = base.replace(day=26, hour=0, minute=0,
+                         second=0, tzinfo=timezone.utc)
+    # End on the *next* month’s 25th at 23:59:59 UTC
+    end = (start + relativedelta(months=1)).replace(day=25,
+                                                    hour=23,
+                                                    minute=59,
+                                                    second=59)
+    return start.isoformat(), end.isoformat()
 
 
 def parse_date(date_str: str) -> date:
@@ -66,23 +64,27 @@ def get_cutoff_windows(month_year: str, num_periods: int):
     return windows
 
 
-def fetch_all_entries(query):
-    """
-    Helper to page through Supabase results in 1 000-row batches
-    until no more rows are returned.
-    """
-    all_rows = []
-    page = 0
-    page_size = 1000
+def fetch_all_entries(base_query, order_column="id"):
+    all_rows, offset, page_size = [], 0, 1000
 
     while True:
-        start = page * page_size
-        end = start + page_size - 1
-        batch = query.range(start, end).execute().data or []
+        q = (
+            base_query
+            .order(order_column, desc=False)
+            .range(offset, offset + page_size - 1)
+        )
+        try:
+            batch = q.execute().data or []
+        except RemoteProtocolError:
+            # cut the page size in half and retry
+            page_size = max(10, page_size // 2)
+            continue
+
         if not batch:
             break
+
         all_rows.extend(batch)
-        page += 1
+        offset += page_size
 
     return all_rows
 
@@ -93,53 +95,57 @@ def company_usage_report(
     period: str = Query(...),
     months: int = Query(6),
     include_logs: bool = Query(True),
-    entry_type: str = Query(None, description="Optional entry_type filter"),
-    exclude_tag: str = Query(None, description="Optional tag to exclude")
+    entry_type: Optional[str] = Query(
+        None, description="Optional entry_type filter"),
+    exclude_tag: Optional[str] = Query(
+        None, description="Optional tag to exclude")
 ):
+    """
+    Returns usage for a single company over N rolling windows of 26th→25th.
+    """
     try:
-        # 1) Build windows in oldest→newest order
-        periods = build_windows(period, months)
+        # 1) build the per‐month windows: offset=0 is the current 26→25 window
+        periods = [get_period_range(period, i) for i in range(months)]
+        # periods[0] = most recent 26→25, periods[-1] = oldest
 
-        # 2) Use the correct min/max from oldest start → newest end
-        min_date = periods[0][0]
-        max_date = periods[-1][1]
+        # 2) fetch *all* entries across all windows:
+        # oldest window start (e.g. 2024-12-26T00:00:00Z)
+        overall_start, _ = periods[-1]
+        # most recent window end (e.g. 2025-06-25T23:59:59Z)
+        _, overall_end = periods[0]
 
-        # 3) Fetch entries
-        min_ts = datetime.combine(periods[0][0], time(
-            0, 0), tzinfo=timezone.utc).isoformat()
-        max_ts = datetime.combine(periods[-1][1] + timedelta(days=1),
-                                  time(0, 0), tzinfo=timezone.utc).isoformat()
         query = (
-            supabase
-            .table("time_entries")
+            supabase.table("time_entries")
             .select("id, hours, start_time")
             .eq("company_hubspot_id", company_id)
-            .gte("start_time", min_date)
-            .lte("start_time", max_date)
+            .gte("start_time", overall_start)
+            .lte("start_time", overall_end)
             .neq("tag", exclude_tag)
-            .gte("start_time", min_ts)
-            .lt("start_time", max_ts)
         )
         if entry_type:
             query = query.eq("entry_type", entry_type)
+
         entries = query.execute().data or []
 
-        # 4) Bucket into each window
+        # 3) bucket them into each window
         period_totals = [0.0] * months
         period_logs = [[] for _ in range(months)]
 
         for entry in entries:
-            dt = isoparse(entry["start_time"]).astimezone(timezone.utc).date()
-            for i, (start, end) in enumerate(periods):
+            dt = isoparse(entry["start_time"])
+            hrs = float(entry.get("hours") or 0)
+
+            for idx, (start_iso, end_iso) in enumerate(periods):
+                start = isoparse(start_iso)
+                end = isoparse(end_iso)
                 if start <= dt <= end:
-                    period_totals[i] += float(entry["hours"] or 0)
-                    period_logs[i].append(entry["id"])
+                    period_totals[idx] += hrs
+                    period_logs[idx].append(entry["id"])
                     break
 
-        # 5) Fetch SLA and compute metrics
+        # 4) SLA & stats
         sla_res = (
-            supabase
-            .table("hubspot_companies")
+            supabase.table("hubspot_companies")
             .select("hours_per_month")
             .eq("hubspot_id", company_id)
             .limit(1)
@@ -151,13 +157,12 @@ def company_usage_report(
         average = total / months
         percentage_usage = (total / (sla * months)) * 100 if sla > 0 else None
 
-        # 6) Return aligned data (no duplicate keys, no extra reversals)
         return {
             "company_id": company_id,
             "months": months,
-            "periods": [(s.isoformat(), e.isoformat()) for s, e in periods],
+            "periods": periods,
             "total_time": total,
-            "period_totals": period_totals,   # oldest→newest
+            "period_totals": period_totals,
             "sla": sla,
             "average": average,
             "percentage_usage": percentage_usage,
@@ -166,7 +171,26 @@ def company_usage_report(
         }
 
     except Exception as e:
-        return {"detail": str(e)}
+        raise HTTPException(500, detail=str(e))
+
+
+@router.get("/time-entry-detail", summary="Fetch full rows for a list of time-entry IDs")
+def time_entry_detail(
+    ids: List[str] = Query(..., alias="ids[]",
+                           description="Array of time_entry IDs")
+):
+    """
+    Given ?ids[]=uuid1&ids[]=uuid2… returns the full time_entries rows
+    for each matching id.
+    """
+    res = (
+        supabase
+        .table("time_entries")
+        .select("*")
+        .in_("id", ids)
+        .execute()
+    )
+    return res.data or []
 
 
 @router.get("/all-company-usage")
@@ -294,7 +318,7 @@ def companies_with_time_entries(
         .table("time_entries")
         .select("id, hours, company_hubspot_id, start_time")
         .gte("start_time", start_dt.isoformat())
-        .lte("start_time", end_dt.isoformat())
+        .lte("end_time", end_dt.isoformat())
     )
     if exclude_tag:
         q = q.neq("tag", exclude_tag)
@@ -471,25 +495,26 @@ def companies_over_sla(
     period: str = Query(..., description="MM-YYYY, e.g. '06-2025'"),
     num_periods: int = Query(6, ge=1, le=12),
     filter_monthly: bool = Query(
-        False, description="Include companies with any single month over SLA"),
-    entry_type: str = Query(None, description="Optional entry_type filter"),
-    exclude_tag: str = Query(None, description="Optional tag to exclude")
+        False, description="Include companies with any single month over SLA"
+    ),
+    entry_type: Optional[str] = Query(
+        None, description="Optional entry_type filter"),
+    exclude_tag: Optional[str] = Query(
+        None, description="Optional tag to exclude"),
 ):
-    # 1) Build rolling windows
-    windows = []
+    # 1) Build N windows of (start_iso, end_iso) from oldest→newest
     try:
-        for offset in range(num_periods - 1, -1, -1):
-            start_iso, end_iso = get_period_range(period, offset)
-            windows.append((parse_date(start_iso), parse_date(end_iso)))
-    except HTTPException:
+        windows = [
+            get_period_range(period, offset)
+            for offset in range(num_periods - 1, -1, -1)
+        ]
+    except Exception:
         raise HTTPException(
             400, detail="Invalid period format; expected MM-YYYY")
-    oldest_date, newest_date = windows[0][0], windows[-1][1]
 
-    oldest_ts = datetime.combine(oldest_date, time(
-        0, 0), tzinfo=timezone.utc).isoformat()
-    next_day_ts = datetime.combine(
-        newest_date + timedelta(days=1), time(0, 0), tzinfo=timezone.utc).isoformat()
+    # Extract global query bounds
+    oldest_start_iso, _ = windows[0]
+    _, newest_end_iso = windows[-1]
 
     # 2) Fetch customer companies
     cust_res = (
@@ -503,60 +528,75 @@ def companies_over_sla(
     if not customers:
         return []
 
-    meta = {int(c["hubspot_id"]): {"sla": float(
-        c.get("hours_per_month") or 0), "raw": c.get("raw", {})} for c in customers}
+    # Build metadata map: {company_id: {sla, raw}}
+    meta = {
+        int(c["hubspot_id"]): {
+            "sla": float(c.get("hours_per_month") or 0),
+            "raw": c.get("raw", {})
+        }
+        for c in customers
+    }
     customer_ids = list(meta.keys())
 
-    # 3) Fetch entries
+    # 3) Fetch all relevant time entries, paged, ordered by id
     base_query = (
         supabase
         .table("time_entries")
         .select("company_hubspot_id, hours, start_time")
         .in_("company_hubspot_id", customer_ids)
-        .gte("start_time", oldest_ts)
-        .lt("start_time", next_day_ts)
+        .gte("start_time", oldest_start_iso)
+        .lte("start_time", newest_end_iso)
     )
     if exclude_tag:
         base_query = base_query.neq("tag", exclude_tag)
     if entry_type:
         base_query = base_query.eq("entry_type", entry_type)
 
-    entries = fetch_all_entries(base_query)
+    entries = fetch_all_entries(base_query, order_column="id")
 
-    # 4) Bucket and rolling totals
+    # 4) Bucket per company per window, and rolling totals
     usage_by_company = defaultdict(lambda: [0.0] * num_periods)
     roll_6 = defaultdict(float)
     roll_12 = defaultdict(float)
-    six_cutoff = newest_date - relativedelta(months=6)
-    twelve_cutoff = newest_date - relativedelta(months=12)
+
+    newest_end_date = isoparse(newest_end_iso).astimezone(timezone.utc).date()
+    six_cutoff = newest_end_date - relativedelta(months=6)
+    twelve_cutoff = newest_end_date - relativedelta(months=12)
 
     for e in entries:
         cid = int(e.get("company_hubspot_id", 0))
         if cid not in meta or not e.get("start_time"):
             continue
-        dt = isoparse(e["start_time"]).astimezone(timezone.utc).date()
+
+        dt_utc = isoparse(e["start_time"]).astimezone(timezone.utc)
         hrs = float(e.get("hours") or 0)
 
-        for idx, (start, end) in enumerate(windows):
-            if start <= dt <= end:
+        # assign to the correct monthly bucket
+        for idx, (start_iso, end_iso) in enumerate(windows):
+            start_dt = isoparse(start_iso)
+            end_dt = isoparse(end_iso)
+            if start_dt <= dt_utc <= end_dt:
                 usage_by_company[cid][idx] += hrs
                 break
 
-        if dt >= six_cutoff:
+        # rolling sums
+        dt_date = dt_utc.date()
+        if dt_date >= six_cutoff:
             roll_6[cid] += hrs
-        if dt >= twelve_cutoff:
+        if dt_date >= twelve_cutoff:
             roll_12[cid] += hrs
 
-    # 5) Build response
+    # 5) Build final result list
     result = []
     for cid, usage_list in usage_by_company.items():
         sla = meta[cid]["sla"]
         total_usage = sum(usage_list)
-        avg_usage = total_usage / num_periods
-        pct_usage = (avg_usage / sla * 100) if sla > 0 else None
+        average_usage = total_usage / num_periods if num_periods else 0
+        pct_usage = (average_usage / sla * 100) if sla > 0 else None
         monthly_exceed = any(u > sla for u in usage_list)
         latest_usage = usage_list[-1]
 
+        # apply filter_monthly vs. average‐based
         if filter_monthly:
             if not monthly_exceed:
                 continue
@@ -569,15 +609,15 @@ def companies_over_sla(
         result.append({
             "company_id": cid,
             "sla": sla,
-            "periods": [(s.isoformat(), e.isoformat()) for s, e in windows],
+            "periods": [(s, e) for s, e in windows],
             "period_usage": usage_list,
             "total_usage": total_usage,
-            "average_usage": avg_usage,
+            "average_usage": average_usage,
             "percentage_usage": pct_usage,
             "last_6_months_usage": roll_6[cid],
             "last_12_months_usage": roll_12[cid],
             "missing_sla": sla == 0,
-            "company_raw": meta[cid]["raw"]
+            "company_raw": meta[cid]["raw"],
         })
 
     return result
@@ -590,8 +630,6 @@ def company_report_pdf(
     months: int = Query(6, ge=1, le=12),
     exclude_tag: str = Query(None, description="Optional tag to exclude"),
     entry_type: str = Query(None, description="Optional entry_type filter"),
-    entry_neq: str = Query(
-        None, description="Optional entry_type to exclude, secondary to entry_type")
 ):
     try:
         data = ReportsService.get_company_usage(
@@ -600,7 +638,6 @@ def company_report_pdf(
             months=months,
             exclude_tag=exclude_tag,
             entry_type=entry_type,
-            entry_neq=entry_neq
         )
         pdf_bytes = ReportsService.build_pdf(data)
         return Response(

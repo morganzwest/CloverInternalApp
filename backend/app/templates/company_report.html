@@ -1,79 +1,124 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
-    <style>
-        body {
-            font-family: sans-serif;
-            margin: 1em;
-        }
-
-        h1 {
-            font-size: 1.5em;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1em;
-        }
-
-        th,
-        td {
-            border: 1px solid #ccc;
-            padding: 0.25em;
-            font-size: 0.85em;
-        }
-
-        th {
-            background: #eee;
-            text-align: left;
-        }
-
-        .chart {
-            margin-top: 1em;
-            text-align: center;
-        }
-    </style>
+    <title>{{ company.name or "Company" }} – Usage Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 </head>
 
-<body>
-    <h1>{{ company.name or "Company" }} – Usage Report</h1>
-    <p><strong>Total time:</strong> {{ "%.2f"|format(total_time) }} hrs<br>
-        {% for start,end in windows %}
-        {{ start }} → {{ end }}{% if not loop.last %}, {% endif %}
-        {% endfor%}
-    </p>
+<body class="text-gray-800 font-sans max-w-5xl mx-auto p-6">
 
-    <div class="chart">
-        <img src="data:image/png;base64,{{ chart_png }}" alt="Time by Day" />
-    </div>
+    <header class="mb-6 flex justify-between items-center border-b-2 border-emerald-700 pb-2">
+        <div>
+            <h1 class="text-3xl font-bold ">
+                {{ company.name or "Company" }} Usage Report
+            </h1>
+            <div class="mt-2 text-sm space-y-1">
+                <div>
+                    <strong>Total time:</strong> {{ "%.2f"|format(total_time) }} hrs
+                    <span class="ml-4"><strong>SLA:</strong> {{ "%.2f"|format(sla) }} hrs</span>
+                </div>
+                <div>
+                    <strong>Period:</strong>
+                    {{ windows[0][0] }} – {{ windows[-1][1] }} ({{ months }} months)
+                </div>
+            </div>
+        </div>
+        <div class="flex-shrink-0 ml-4">
+            <img src="https://www.cloverhr.co.uk/wp-content/uploads/2023/03/logo-1.png" alt="Company Logo"
+                class="h-8 w-auto">
+        </div>
+    </header>
 
-    <h2>Time Entries (Current Period)</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Date</th>
-                <th>Hours</th>
-                <th>Description</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for e in entries %}
-            <tr>
-                <td>{{ e.date }}</td>
-                <td>{{ "%.2f"|format(e.hours) }}</td>
-                <td>{{ e.description }}</td>
-            </tr>
-            {% endfor %}
-            {% if entries|length == 0 %}
-            <tr>
-                <td colspan="3" style="text-align:center">No entries found</td>
-            </tr>
-            {% endif %}
-        </tbody>
-    </table>
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-4">Daily Time Delivered</h2>
+        <div class="w-full">
+            <img class="w-full h-full object-contain" src="data:image/png;base64,{{ chart_png }}" alt="Time by Day">
+        </div>
+    </section>
+
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-4">Monthly Summary</h2>
+        <div class="overflow-x-auto border border-gray-200 rounded-lg">
+            <table class="min-w-full table-auto text-sm divide-y divide-gray-200">
+                <thead class="bg-emerald-700 text-white">
+                    <tr>
+                        <th class="px-3 py-2 text-left border-b border-gray-200">Month</th>
+                        <th class="px-3 py-2 text-right border-b border-gray-200">Usage (hrs)</th>
+                        <th class="px-3 py-2 text-right border-b border-gray-200">SLA (hrs)</th>
+                        <th class="px-3 py-2 text-right border-b border-gray-200">Diff (hrs)</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white">
+                    {% for m in monthly_totals %}
+                    <tr class="odd:bg-white even:bg-gray-50 hover:bg-gray-100">
+                        <td class="px-3 py-2 border-b border-gray-200">{{ m.month }}</td>
+                        <td class="px-3 py-2 text-right border-b border-gray-200">{{ "%.2f"|format(m.usage) }}</td>
+                        <td class="px-3 py-2 text-right border-b border-gray-200">{{ "%.2f"|format(sla) }}</td>
+                        <td class="px-3 py-2 text-right border-b border-gray-200">{{ "%.2f"|format(m.usage - sla) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="bg-slate-200 font-semibold">
+                    <tr>
+                        <td class="px-3 py-2">Totals</td>
+                        <td class="px-3 py-2 text-right">{{ "%.2f"|format(total_usage) }}</td>
+                        <td class="px-3 py-2 text-right">{{ "%.2f"|format(total_sla) }}</td>
+                        <td class="px-3 py-2 text-right">{{ "%.2f"|format(total_diff) }}</td>
+                    </tr>
+                    <tr>
+                        <td class="px-3 py-2">Average Utilization</td>
+                        <td colspan="3" class="px-3 py-2 text-right">{{ "%.1f"|format(avg_util) }}%</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-xl font-semibold mb-2">Time Entries (Current Period)</h2>
+        <div class="overflow-x-auto border border-gray-200 rounded-lg">
+            <table class="min-w-full table-auto text-sm divide-y divide-gray-200">
+                <thead class="bg-emerald-700 text-white">
+                    <tr>
+                        <th class="px-3 py-2 text-left border-b border-gray-200">Description</th>
+                        <th class="px-3 py-2 border-b border-gray-200">Date</th>
+                        <th class="px-3 py-2 border-b border-gray-200">Start</th>
+                        <th class="px-3 py-2 border-b border-gray-200">End</th>
+                        <th class="px-3 py-2 text-right border-b border-gray-200">Hours</th>
+                        <th class="px-3 py-2 border-b border-gray-200">Tag</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white">
+                    {% for e in entries %}
+                    <tr class="odd:bg-white even:bg-gray-50 hover:bg-gray-100">
+                        <td class="px-3 py-2 max-w-xs break-words border-b border-gray-200">{{ e.description or '-' }}
+                        </td>
+                        <td class="px-3 py-2 whitespace-nowrap border-b border-gray-200">{{ e.start_time[:10] }}</td>
+                        <td class="px-3 py-2 whitespace-nowrap border-b border-gray-200">{{ e.start_time[11:16] }}</td>
+                        <td class="px-3 py-2 whitespace-nowrap border-b border-gray-200">{{ e.end_time[11:16] }}</td>
+                        <td class="px-3 py-2 text-right whitespace-nowrap border-b border-gray-200">
+                            {% set total_min = (e.hours * 60)|round(0, 'floor') %}
+                            {% set h = (total_min // 60)|int %}
+                            {% set m = (total_min % 60)|int %}
+                            {{ h }}:{{ "%02d"|format(m) }}
+                        </td>
+                        <td class="px-3 py-2 whitespace-nowrap max-w-32 border-b border-gray-200">{{ e.tag or '-' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if entries|length == 0 %}
+                    <tr>
+                        <td colspan="6" class="text-center py-4">No entries found</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
 </body>
 
 </html>
