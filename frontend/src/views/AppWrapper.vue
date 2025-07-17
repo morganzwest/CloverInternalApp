@@ -4,7 +4,7 @@
         <nav class="bg-white border-b border-gray-200 px-4 lg:px-6 py-3 ">
             <div class="flex justify-between items-center mx-auto max-w-7xl">
                 <!-- Logo / Brand -->
-                <RouterLink to="/" class="flex items-center gap-2 group">
+                <RouterLink to="/app" class="flex items-center gap-2 group">
                     <img src="https://www.cloverhr.co.uk/wp-content/uploads/2023/03/logo-1.png" alt="AcmePro logo"
                         class="h-8 w-auto" />
                 </RouterLink>
@@ -60,10 +60,22 @@
     <main class="my-8 rounded-xl shadow border border-gray-200 p-8 bg-white mx-auto max-w-5/6">
         <slot />
     </main>
+    <footer class="bg-gray-50 border-t border-gray-200 px-4 py-4 text-center text-sm text-gray-600">
+        <div v-if="sync.error">
+          ⚠️ Error fetching last sync time
+        </div>
+        <div v-else-if="!sync.loaded">
+          Loading last sync…
+        </div>
+        <div v-else>
+          Last sync: {{ sync.formattedSync }}
+        </div>
+      </footer>
+
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
 
@@ -83,6 +95,15 @@ async function handleLogout() {
         console.error('Logout failed:', err)
     }
 }
+
+// --- last_sync footer logic ---
+
+import { useSyncStore } from '../stores/sync'
+const sync = useSyncStore()
+
+onMounted(() => {
+  sync.fetchLastSync()
+})
 </script>
 
 

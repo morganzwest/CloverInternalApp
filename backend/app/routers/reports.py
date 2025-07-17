@@ -10,10 +10,24 @@ from fastapi import BackgroundTasks
 from fastapi.responses import StreamingResponse
 from app.services.pdf_service import ReportsService
 import io
+from pydantic import Field, BaseModel
 from httpx import RemoteProtocolError
-from typing import Optional, List
+from typing import Optional, List, Dict
+from app.services.hubspot import fetch_all_users, map_owner_ids_to_users
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
+
+class EmployeePayroll(BaseModel):
+    owner_id: int = Field(..., description="ID of the time‑entry owner")
+    totalTime: float = Field(
+        ..., description="Total hours logged in the period"
+    )
+    expenses: float = Field(
+        0.0, description="Total expenses (placeholder, always 0 for now)"
+    )
+    contracted: float = Field(
+        0.0, description="Contracted hours (placeholder, always 0 for now)"
+    )
 
 
 def get_period_range(month_year: str, offset: int = 0):
@@ -651,3 +665,155 @@ def company_report_pdf(
         raise HTTPException(404, str(ve))
     except Exception as e:
         raise HTTPException(500, f"Error generating PDF: {e}")
+
+class User(BaseModel):
+    id: int
+    email: Optional[str]
+    firstName: Optional[str]
+    lastName: Optional[str]
+
+class OwnerMeta(BaseModel):
+    contracted_hours: float = Field(..., description="Contracted hours per period")
+    hourly_rate: Optional[float] = Field(None, description="Standard hourly rate")
+    eligible_for_overtime: bool = Field(..., description="Whether owner is eligible for overtime")
+
+class PayrollWithUsers(BaseModel):
+    payroll: List[EmployeePayroll]
+    users: Dict[int, Optional[User]]
+    owners: Dict[int, Optional[OwnerMeta]]
+
+@router.get(
+    "/payroll/employees",
+    response_model=PayrollWithUsers,
+    summary="Total hours per owner in a date range, plus user & owner metadata"
+)
+def payroll_employees(
+    start_date: str = Query(..., description="Start ISO date, inclusive"),
+    end_date:   str = Query(..., description="End ISO date, inclusive")
+):
+    # Validate dates
+    start_dt = parse_date(start_date)
+    end_dt   = parse_date(end_date)
+    if end_dt < start_dt:
+        raise HTTPException(400, "`end_date` must be on or after `start_date`")
+
+    # Build an inclusive end‑of‑day timestamp for end_date
+    end_of_day = datetime.combine(end_dt, time(23, 59, 59, tzinfo=timezone.utc))
+
+    # 1) Page through ALL matching entries from Supabase
+    all_entries = []
+    page_size = 100
+    offset = 0
+
+    while True:
+        batch = (
+            supabase
+              .table("time_entries")
+              .select("owner_id, hours")
+              .order("id", desc=False)
+              .gte("start_time", start_dt.isoformat())
+              .lte("start_time", end_of_day.isoformat())
+              .range(offset, offset + page_size - 1)
+              .execute()
+        ).data or []
+
+        if not batch:
+            break
+
+        all_entries.extend(batch)
+        offset += page_size
+
+    # 2) Sum hours per owner
+    totals = defaultdict(float)
+    for e in all_entries:
+        oid = e.get("owner_id")
+        if oid is not None:
+            totals[oid] += float(e.get("hours") or 0)
+
+    payroll_list = [
+        EmployeePayroll(owner_id=oid, totalTime=hrs, expenses=0.0, contracted=0.0)
+        for oid, hrs in totals.items()
+    ]
+
+    owner_ids = list(totals.keys())
+
+    # 3) Fetch users via HubSpot & map to OwnerMeta (unchanged)
+    all_users = fetch_all_users()
+    raw_user_map = map_owner_ids_to_users(owner_ids, all_users)
+    users_map: Dict[int, Optional[User]] = {
+        oid: User(
+            id=int(u["id"]),
+            email=u.get("email"),
+            firstName=u.get("firstName"),
+            lastName=u.get("lastName")
+        ) if u else None
+        for oid, u in raw_user_map.items()
+    }
+
+    owner_meta_res = (
+        supabase
+          .table("owners")
+          .select("hubspot_id, contracted_hours, hourly_rate, eligible_for_overtime")
+          .in_("hubspot_id", owner_ids)
+          .execute()
+    )
+    meta_list = owner_meta_res.data or []
+    owner_meta_map = {m["hubspot_id"]: m for m in meta_list}
+
+    owners_map: Dict[int, Optional[OwnerMeta]] = {}
+    for oid in owner_ids:
+        m = owner_meta_map.get(oid)
+        if m:
+            owners_map[oid] = OwnerMeta(
+                contracted_hours=float(m.get("contracted_hours") or 0),
+                hourly_rate=(float(m.get("hourly_rate")) if m.get("hourly_rate") is not None else None),
+                eligible_for_overtime=bool(m.get("eligible_for_overtime"))
+            )
+        else:
+            owners_map[oid] = None
+
+    return PayrollWithUsers(
+        payroll=payroll_list,
+        users=users_map,
+        owners=owners_map
+    )
+
+class LastSyncResponse(BaseModel):
+    last_sync: datetime = Field(
+        ..., 
+        description="Most recent `last_updated` timestamp from the `time_entries` table (UTC)"
+    )
+
+@router.get(
+    "/last_sync",
+    response_model=LastSyncResponse,
+    summary="Get the most recent `last_updated` timestamp from time_entries"
+)
+def get_last_sync():
+    # 1) Fetch the latest last_updated
+    res = (
+        supabase
+        .table("time_entries")
+        .select("updated_at")
+        .order("updated_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    rows = res.data or []
+    if not rows:
+        # no entries at all
+        raise HTTPException(status_code=404, detail="No time entries found")
+
+    raw_ts = rows[0].get("updated_at")
+    if not raw_ts:
+        raise HTTPException(status_code=500, detail="Malformed `updated_at` value")
+
+    # 2) Parse & normalize to UTC datetime
+    try:
+        ts = isoparse(raw_ts).astimezone(timezone.utc)
+    except Exception:
+        raise HTTPException(status_code=500, detail=f"Invalid timestamp format: {raw_ts}")
+
+    # 3) Return
+    return LastSyncResponse(last_sync=ts)
