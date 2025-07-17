@@ -1,7 +1,7 @@
 // src/stores/sync.js
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { api } from '../lib/apiclient'
+import { api } from '../lib/ApiClient'
 
 export const useSyncStore = defineStore('sync', () => {
   // state
