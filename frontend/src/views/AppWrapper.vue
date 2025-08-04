@@ -4,14 +4,8 @@
         <nav class="bg-white border-b border-gray-200 px-4 lg:px-6 py-3 ">
             <div class="flex justify-between items-center mx-auto max-w-7xl">
                 <!-- Logo / Brand -->
-<<<<<<< HEAD
                 <RouterLink to="/" class="flex items-center gap-2 group">
                     <img src="https://i.ibb.co/xpF67pw/cloverlogo.png" alt="Clover HR" class="h-8 w-auto" />
-=======
-                <RouterLink to="/app" class="flex items-center gap-2 group">
-                    <img src="https://www.cloverhr.co.uk/wp-content/uploads/2023/03/logo-1.png" alt="AcmePro logo"
-                        class="h-8 w-auto" />
->>>>>>> 8f709f577a988f89622874f9bcc7b687cad0189a
                 </RouterLink>
 
                 <!-- emerald navigation links (desktop) -->
@@ -67,15 +61,15 @@
     </main>
     <footer class="bg-gray-50 border-t border-gray-200 px-4 py-4 text-center text-sm text-gray-600">
         <div v-if="sync.error">
-          ⚠️ Error fetching last sync time
+            ⚠️ Error fetching last sync time
         </div>
         <div v-else-if="!sync.loaded">
-          Loading last sync…
+            Loading last sync…
         </div>
         <div v-else>
-          Last sync: {{ sync.formattedSync }}
+            Last sync: {{ sync.formattedSync }}
         </div>
-      </footer>
+    </footer>
 
 </template>
 
@@ -107,7 +101,7 @@ import { useSyncStore } from '../stores/sync'
 const sync = useSyncStore()
 
 onMounted(() => {
-  sync.fetchLastSync()
+    sync.fetchLastSync()
 })
 </script>
 
