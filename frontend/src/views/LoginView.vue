@@ -37,7 +37,7 @@ const submit = async () => {
     <section class="bg-gray-50 ">
         <div class="flex flex-col items-center justify-center px-6 py-8 mx-auto md:h-screen lg:py-0">
             <a href="#" class="flex items-center mb-8 text-2xl font-semibold text-gray-900 ">
-                <img class="h-10" src="https://www.cloverhr.co.uk/wp-content/uploads/2023/03/logo-1.png" alt="logo">
+                <img class="h-10" src="https://i.ibb.co/xpF67pw/cloverlogo.png" alt="logo">
             </a>
             <div class="w-full bg-white rounded-lg shadow  md:mt-0 sm:max-w-md xl:p-0 ">
                 <div class="p-6 space-y-4 md:space-y-6 sm:p-8">

@@ -5,8 +5,7 @@
             <div class="flex justify-between items-center mx-auto max-w-7xl">
                 <!-- Logo / Brand -->
                 <RouterLink to="/" class="flex items-center gap-2 group">
-                    <img src="https://www.cloverhr.co.uk/wp-content/uploads/2023/03/logo-1.png" alt="AcmePro logo"
-                        class="h-8 w-auto" />
+                    <img src="https://i.ibb.co/xpF67pw/cloverlogo.png" alt="Clover HR" class="h-8 w-auto" />
                 </RouterLink>
 
                 <!-- emerald navigation links (desktop) -->
