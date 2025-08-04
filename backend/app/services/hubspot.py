@@ -156,6 +156,109 @@ def upsert_companies_to_supabase(companies: List[Dict]) -> None:
 
     print("[upsert_companies_to_supabase] Upsert complete.")
 
+def map_owner_ids_to_users(
+    owner_ids: List[int], users: List[Dict]
+) -> Dict[int, Optional[Dict]]:
+    """
+    Given a list of owner_ids and a list of user objects (from fetch_all_users),
+    return a mapping of owner_id → user object (or None if not found).
+    """
+    # Build a fast lookup by HubSpot owner ID
+    user_by_id = {int(u["id"]): u for u in users}
+    mapping: Dict[int, Optional[Dict]] = {}
+    for oid in owner_ids:
+        mapping[oid] = user_by_id.get(oid)
+        if mapping[oid] is None:
+            print(f"[map_owner_ids_to_users] No user found for owner_id={oid}")
+    return mapping
+
+# 1) Raw HubSpot fetch—no inserts here
+def _raw_fetch_all_users(limit: int = 100) -> List[Dict]:
+    print(f"[_raw_fetch_all_users] Starting fetch with page size {limit}")
+    url = f"{BASE_URL}/crm/v3/owners"
+    params = {"limit": limit}
+    results: List[Dict] = []
+
+    try:
+        while url:
+            print(f"[ _raw_fetch_all_users] GET {url} params={params}")
+            res = session.get(url, headers=HEADERS, params=params)
+            if res.status_code == 403:
+                print("[_raw_fetch_all_users] ⚠️ 403 Forbidden – skipping owner fetch")
+                return []
+            res.raise_for_status()
+            data = res.json()
+
+            batch = data.get("results", [])
+            print(f"[_raw_fetch_all_users] Retrieved {len(batch)} users")
+            results.extend(batch)
+
+            url = data.get("paging", {}).get("next", {}).get("link")
+            params = {}
+    except Exception as e:
+        print(f"[_raw_fetch_all_users] ⚠️ Error fetching users: {e}")
+        return []
+
+    print(f"[_raw_fetch_all_users] Completed fetch: {len(results)} total users")
+    return results
+
+def insert_new_owners_to_supabase(
+    users: List[Dict], chunk_size: int = 100
+) -> int:
+    """
+    Given a list of HubSpot owner dicts, insert only those
+    whose hubspot_id isn’t already in the `owners` table.
+    Returns number of new records inserted.
+    """
+    if not users:
+        print("[insert_new_owners_to_supabase] No users provided, aborting.")
+        return 0
+
+    # 1) Build default owner records
+    records = [
+        {"hubspot_id": int(u["id"]), "contracted_hours": 0, "hourly_rate": None}
+        for u in users
+    ]
+
+    # 2) Fetch existing IDs from Supabase
+    existing = supabase.table("owners").select("hubspot_id").execute().data or []
+    existing_ids = {r["hubspot_id"] for r in existing}
+    print(f"[insert_new_owners_to_supabase] Found {len(existing_ids)} existing owners")
+
+    # 3) Filter out ones we already have
+    new_records = [r for r in records if r["hubspot_id"] not in existing_ids]
+    if not new_records:
+        print("[insert_new_owners_to_supabase] No new owners to insert")
+        return 0
+
+    print(f"[insert_new_owners_to_supabase] Inserting {len(new_records)} new owners...")
+
+    # 4) Insert in chunks
+    inserted = 0
+    for i in range(0, len(new_records), chunk_size):
+        chunk = new_records[i : i + chunk_size]
+        try:
+            supabase.table("owners").insert(chunk).execute()
+            inserted += len(chunk)
+            print(f"[insert_new_owners_to_supabase] → Inserted chunk {i//chunk_size+1} ({len(chunk)} records)")
+        except Exception as e:
+            print(f"[insert_new_owners_to_supabase] ❌ Failed to insert chunk {i//chunk_size+1}: {e}")
+
+    print(f"[insert_new_owners_to_supabase] Done. Total new owners inserted: {inserted}")
+    return inserted
+
+
+def fetch_all_users(limit: int = 100) -> List[Dict]:
+    """
+    Fetch all HubSpot owners *and* upsert any new ones into Supabase,
+    then return the list of owners.
+    """
+    users = _raw_fetch_all_users(limit)
+    if users:
+        insert_new_owners_to_supabase(users)
+    return users
+
+
 
 def fetch_all_time_entries(limit: int = 100) -> List[Dict]:
     print("[fetch_all_time_entries] Starting fetch_all_time_entries with limit =", limit)

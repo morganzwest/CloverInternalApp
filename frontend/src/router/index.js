@@ -3,6 +3,7 @@ import { useAuth } from '../stores/auth'
 import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import { supabase } from '../lib/supabase'
+import PayrollView from '../views/PayrollView.vue'
 
 const routes = [
     {
@@ -13,6 +14,11 @@ const routes = [
     {
         path: '/app',
         component: DashboardView,
+        meta: { public: false },
+    },
+    {
+        path: '/app/payroll',
+        component: PayrollView,
         meta: { public: false },
     }
 ]
