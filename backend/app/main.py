@@ -15,7 +15,9 @@ app = FastAPI()
 
 origins = [
     "http://localhost:5173",
-    "https://clover-internal-app.vercel.app"
+    "https://clover-internal-app.vercel.app",
+    "https://internal.cloverhr.co.uk",
+
 ]
 app.add_middleware(
     CORSMiddleware,
