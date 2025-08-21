@@ -4,6 +4,8 @@ import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import { supabase } from '../lib/supabase'
 import PayrollView from '../views/PayrollView.vue'
+import clientreport from '../views/ClientReport.vue'
+import UnderusageView from '../views/UnderusageView.vue'
 
 const routes = [
     {
@@ -19,6 +21,16 @@ const routes = [
     {
         path: '/app/payroll',
         component: PayrollView,
+        meta: { public: false },
+    },
+    {
+        path: '/app/report',
+        component: clientreport,
+        meta: { public: false },
+    },
+    {
+        path: '/app/underusage',
+        component: UnderusageView,
         meta: { public: false },
     }
 ]

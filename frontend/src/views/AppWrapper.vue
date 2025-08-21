@@ -15,8 +15,8 @@
                             active-class="text-emerald-700 ">Overhours</RouterLink>
                     </li>
                     <li>
-                        <RouterLink to="/app" class="text-gray-700 hover:text-emerald-700  font-medium"
-                            active-class="text-emerald-700 ">Consultancy</RouterLink>
+                        <RouterLink to="/app/underusage" class="text-gray-700 hover:text-emerald-700  font-medium"
+                            active-class="text-emerald-700 ">Hours vs SLA</RouterLink>
                     </li>
                     <li>
                         <RouterLink to="/app/report" class="text-gray-700 hover:text-emerald-700  font-medium"

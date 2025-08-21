@@ -4,7 +4,10 @@
         <aside v-if="visible" class="fixed top-0 right-0 bg-white shadow-xl overflow-auto h-screen w-1/2" role="dialog"
             aria-modal="true" aria-labelledby="drawer-title">
             <header class="flex items-center justify-between p-4 border-b">
-                <h2 id="drawer-title" class="text-xl font-semibold">{{ title }}</h2>
+                <h2 id="drawer-title" class="text-xl font-semibold">{{ title }}<span
+                        class="bg-purple-100 text-purple-800 ml-2 text-xs font-medium me-2 px-2.5 py-0.5 rounded-sm dark:bg-purple-900 dark:text-purple-300">{{
+                            details.company_id }}</span>
+                </h2>
                 <button @click="$emit('close')" aria-label="Close drawer" class="p-2">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">

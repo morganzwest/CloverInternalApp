@@ -1,6 +1,6 @@
 <template>
   <AppWrapper>
-    <h1 class="text-2xl font-bold mb-4">Overhours Report</h1>
+    <h1 class="text-2xl font-bold mb-4">Hours vs SLA Report</h1>
 
     <!-- Month/Year/Periods selectors with fetch button -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 items-end">
@@ -16,7 +16,6 @@
               class="block w-full pl-3 pr-10 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-emerald-500 focus:border-emerald-500"
               aria-label="Search companies" />
             <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-              <!-- search icon -->
               <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -100,7 +99,7 @@
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
       </svg>
-      <p>Fetching companies over SLA…</p>
+      <p>Fetching usage report…</p>
     </div>
 
     <!-- 2) Error State -->
@@ -112,7 +111,7 @@
       <span>Error loading data: {{ error }}</span>
     </div>
 
-    <!-- 3) First‑run Empty State -->
+    <!-- 3) First-run Empty State -->
     <div v-else-if="!hasFetched" class="flex flex-col items-center justify-center py-16 space-y-2 text-gray-500">
       <svg class="h-12 w-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -121,36 +120,72 @@
       <p>No data yet — click <strong>Load Report</strong> to get started.</p>
     </div>
 
-    <!-- 4) No‑results Empty State -->
-    <div v-else-if="!filteredCompanies.length"
+    <!-- 4) No-results Empty State -->
+    <div v-else-if="!sortedFilteredRows.length"
       class="flex flex-col items-center justify-center py-16 space-y-2 text-gray-500">
       <svg class="h-12 w-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
           d="M21 21l-4.35-4.35m2.1-5.15a8 8 0 11-16 0 8 8 0 0116 0z" />
       </svg>
-      <p>
-        No companies match your filters. Try adjusting your search or date
-        range.
-      </p>
+      <p>No companies match your filters. Try adjusting your search or date range.</p>
     </div>
 
     <div v-else class="relative overflow-x-auto shadow-md sm:rounded-lg">
-      <table v-if="filteredCompanies.length" class="w-full text-sm text-left text-gray-500">
+      <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-200">
           <tr>
-            <th class="px-6 py-3">Company Name</th>
-            <th class="px-6 py-3 text-right">Monthly SLA</th>
-            <th class="px-6 py-3 text-right">This Month Usage</th>
-            <th class="px-6 py-3 text-right">Variation</th>
-            <th class="px-6 py-3 text-right">Total SLA</th>
-            <th class="px-6 py-3 text-right">Total Usage</th>
-            <th class="px-6 py-3 text-right">Total Variation</th>
-            <th class="px-6 py-3 text-right">Hourly Rate</th>
-            <th class="px-6 py-3 text-right">Charge</th>
+            <th class="px-6 py-3">
+              <button @click="toggleSort('name')" class="uppercase tracking-wide">
+                Company
+                <span v-if="sortKey === 'name'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('sla')" class="uppercase tracking-wide">
+                Monthly SLA
+                <span v-if="sortKey === 'sla'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('monthUsage')" class="uppercase tracking-wide">
+                This Month Usage
+                <span v-if="sortKey === 'monthUsage'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('monthPct')" class="uppercase tracking-wide">
+                % SLA Utilisation
+                <span v-if="sortKey === 'monthPct'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('monthVariation')" class="uppercase tracking-wide">
+                Variation
+                <span v-if="sortKey === 'monthVariation'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('totalSla')" class="uppercase tracking-wide">
+                Total SLA
+                <span v-if="sortKey === 'totalSla'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('totalUsage')" class="uppercase tracking-wide">
+                Total Usage
+                <span v-if="sortKey === 'totalUsage'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th class="px-6 py-3 text-right">
+              <button @click="toggleSort('utilisationPct')" class="uppercase tracking-wide">
+                Total Usage %
+                <span v-if="sortKey === 'utilisationPct'">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in filteredCompanies" :key="item.company_id"
+          <tr v-for="item in sortedFilteredRows" :key="item.company_id"
             class="bg-white border-b border-gray-200 hover:bg-gray-100">
             <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
               <button @click="openDrawer(item)" class="hover:underline cursor-pointer hover:text-emerald-700">
@@ -158,70 +193,34 @@
               </button>
             </th>
             <td class="px-6 py-4 text-right">{{ item.sla.toFixed(1) }}hrs</td>
+            <td class="px-6 py-4 text-right">{{ item.monthUsage.toFixed(1) }}hrs</td>
             <td class="px-6 py-4 text-right">
-              {{ item.monthUsage.toFixed(1) }}hrs
-            </td>
-            <td class="px-6 py-4 text-right">
-              <span :class="item.monthVariation >= 0
-                ? 'text-red-600 font-semibold'
-                : 'text-green-600'
-                ">
-                {{ item.monthVariation >= 0 ? '+' : ''
-                }}{{ item.monthVariation.toFixed(1) }}hrs
+              <span :class="item.monthPct >= 100 ? 'text-red-600 font-semibold' : 'text-gray-700'">
+                {{ Number.isFinite(item.monthPct) ? item.monthPct.toFixed(1) : '—' }}%
               </span>
             </td>
             <td class="px-6 py-4 text-right">
-              {{ (item.sla * selectedNumPeriods).toFixed(1) }}hrs
-            </td>
-            <td class="px-6 py-4 text-right">
-              {{ item.totalUsage.toFixed(1) }}hrs
-            </td>
-            <td class="px-6 py-4 text-right">
-              <span :class="item.totalVariation >= 0
-                ? 'text-red-600 font-semibold'
-                : 'text-green-600'
-                ">
-                {{ item.totalVariation >= 0 ? '+' : ''
-                }}{{ item.totalVariation.toFixed(1) }}hrs
+              <span :class="item.monthVariation >= 0 ? 'text-red-600 font-semibold' : 'text-green-600'">
+                {{ item.monthVariation >= 0 ? '+' : '' }}{{ item.monthVariation.toFixed(1) }}hrs
               </span>
             </td>
+            <td class="px-6 py-4 text-right">{{ item.totalSla.toFixed(1) }}hrs</td>
+            <td class="px-6 py-4 text-right">{{ item.totalUsage.toFixed(1) }}hrs</td>
             <td class="px-6 py-4 text-right">
-              {{ formatCurrency(item.hourlyRate) }}
-            </td>
-            <td class="px-6 py-4 text-right">
-              <!-- NaN or infinite → error style -->
-              <span v-if="!Number.isFinite(item.charge)" class="text-amber-600 font-semibold">
-                Undefined
+              <span :class="{
+                'text-red-600 font-semibold': item.utilisationPct > 100,
+                'text-green-600': item.utilisationPct <= 100 && item.utilisationPct >= 60,
+                'text-amber-500': item.utilisationPct < 60 && item.utilisationPct >= 30,
+                'text-purple-600 font-semibold': item.utilisationPct < 30
+              }">
+                {{ Number.isFinite(item.utilisationPct) ? item.utilisationPct.toFixed(1) : '—' }}%
               </span>
+            </td>
 
-              <!-- Positive charge → show currency -->
-              <span v-else-if="item.charge > 0 && item.totalVariation > 0">
-                {{ formatCurrency(item.charge) }}
-              </span>
-
-              <!-- Negative or zero → blank -->
-            </td>
           </tr>
         </tbody>
-        <tfoot class="bg-gray-100">
-          <tr>
-            <td colspan="8" class="px-6 py-4 text-right font-semibold">
-              Eligible Overcharges:
-            </td>
-            <td class="px-6 py-4 text-right font-semibold">
-              {{ eligibleCount }}
-            </td>
-          </tr>
-          <tr>
-            <td colspan="8" class="px-6 py-4 text-right font-semibold">
-              Total Overcharge:
-            </td>
-            <td class="px-6 py-4 text-right font-semibold">
-              {{ formatCurrency(totalOvercharge) }}
-            </td>
-          </tr>
-        </tfoot>
       </table>
+
       <ClientDrawer :visible="drawerVisible" :title="selectedCompany?.name" :details="details" :loading="loadingDetails"
         :error="detailsError" :pdf-url="pdfUrl" @close="closeDrawer">
         <template #default="{ details, loading, error, pdfUrl }">
@@ -234,18 +233,12 @@
               <table class="w-full text-sm">
                 <tbody>
                   <tr>
-                    <td class="py-1 font-medium">
-                      Total Time ({{ details.months }} mths)
-                    </td>
-                    <td class="py-1 text-right">
-                      {{ details.total_time.toFixed(1) }} hrs
-                    </td>
+                    <td class="py-1 font-medium">Total Time ({{ details.months }} mths)</td>
+                    <td class="py-1 text-right">{{ details.total_time.toFixed(1) }} hrs</td>
                   </tr>
                   <tr class="bg-gray-50">
                     <td class="py-1 font-medium">Average Usage</td>
-                    <td class="py-1 text-right">
-                      {{ details.average.toFixed(1) }} hrs/mo
-                    </td>
+                    <td class="py-1 text-right">{{ details.average.toFixed(1) }} hrs/mo</td>
                   </tr>
                   <tr>
                     <td class="py-1 font-medium">SLA</td>
@@ -253,9 +246,7 @@
                   </tr>
                   <tr class="bg-gray-50">
                     <td class="py-1 font-medium">Usage %</td>
-                    <td class="py-1 text-right">
-                      {{ details.percentage_usage.toFixed(1) }}%
-                    </td>
+                    <td class="py-1 text-right">{{ details.percentage_usage.toFixed(1) }}%</td>
                   </tr>
                 </tbody>
               </table>
@@ -274,28 +265,18 @@
                 <tbody>
                   <tr v-for="(hrs, idx) in details.period_totals || []" :key="idx"
                     :class="idx % 2 === 0 ? '' : 'bg-gray-50'">
-                    <td class="py-1 px-2">
-                      {{ periodLabels[idx] || `Month ${idx + 1}` }}
-                    </td>
-                    <td class="py-1 px-2 text-right">
-                      {{ hrs.toFixed(1) }} hrs
-                    </td>
+                    <td class="py-1 px-2">{{ periodLabels[idx] || `Month ${idx + 1}` }}</td>
+                    <td class="py-1 px-2 text-right">{{ hrs.toFixed(1) }} hrs</td>
                   </tr>
                 </tbody>
               </table>
             </div>
 
             <!-- Entries This Period -->
-            <div v-if="loadingEntries" class="text-gray-500">
-              Loading entries…
-            </div>
-            <div v-else-if="entriesError" class="text-red-600">
-              {{ entriesError }}
-            </div>
+            <div v-if="loadingEntries" class="text-gray-500">Loading entries…</div>
+            <div v-else-if="entriesError" class="text-red-600">{{ entriesError }}</div>
             <div v-else-if="entryDetails.length" class="bg-white rounded-lg">
               <h3 class="text-lg font-semibold mb-2">Entries This Period</h3>
-
-              <!-- scroll wrapper: max height 16rem (64), adjust as needed -->
               <div class="max-h-64 overflow-y-auto">
                 <table class="w-full text-sm text-left">
                   <thead class="bg-gray-100 sticky top-0">
@@ -309,14 +290,10 @@
                   </thead>
                   <tbody class="divide-y divide-gray-100">
                     <tr v-for="e in entryDetails" :key="e.id" class="even:bg-gray-50">
-                      <td class="px-2 py-1 break-words">
-                        {{ truncate(e.description, 30) }}
-                      </td>
+                      <td class="px-2 py-1 break-words">{{ truncate(e.description, 30) }}</td>
                       <td class="px-2 py-1">{{ formatShort(e.start_time) }}</td>
                       <td class="px-2 py-1">{{ formatShort(e.end_time) }}</td>
-                      <td class="px-2 py-1 text-right">
-                        {{ formatHoursToHhmm(e.hours) }}
-                      </td>
+                      <td class="px-2 py-1 text-right">{{ formatHoursToHhmm(e.hours) }}</td>
                       <td class="px-2 py-1">{{ e.tag }}</td>
                     </tr>
                   </tbody>
@@ -329,13 +306,11 @@
             <div class="text-right">
               <button @click="downloadPdf" :disabled="pdfLoading"
                 class="inline-flex items-center px-3 py-2 text-sm font-medium text-white rounded-md focus:ring-4 focus:ring-emerald-300"
-                :class="pdfLoading
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-700'">
+                :class="pdfLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'">
                 <svg v-if="pdfLoading" class="animate-spin mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg"
                   fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a 8 8 0 018-8v8z"></path>
                 </svg>
                 <span v-if="!pdfLoading">Download Detailed PDF</span>
                 <span v-else>Generating...</span>
@@ -395,28 +370,14 @@ async function downloadPdf() {
     ...(exemptTravel.value && { exclude_tag: 'Allowable travel time' })
   }
   try {
-    const response = await api.get(
-      `/reports/pdf/${selectedCompany.value.company_id}`,
-      {
-        params,
-        responseType: 'blob'
-      }
-    )
-    // option A: use file-saver
+    const response = await api.get(`/reports/pdf/${selectedCompany.value.company_id}`, {
+      params,
+      responseType: 'blob'
+    })
     saveAs(response.data, `company_${selectedCompany.value.company_id}_report.pdf`)
     pdfLoading.value = false
-    // option B: manually create a download link:
-    // const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
-    // const link = document.createElement('a')
-    // link.href = url
-    // link.setAttribute('download', `company_${selectedCompany.value.company_id}_report.pdf`)
-    // document.body.appendChild(link)
-    // link.click()
-    // document.body.removeChild(link)
-    // window.URL.revokeObjectURL(url)
   } catch (err) {
     console.error('PDF download failed', err)
-    // you can show a notification here
     pdfLoading.value = true
   }
 }
@@ -436,13 +397,11 @@ const pdfUrl = ref('')
 const selectedCompany = ref(null)
 const drawerVisible = ref(false)
 
-
 function openDrawer(company) {
   selectedCompany.value = company
   drawerVisible.value = true
   fetchDetails(company)
 }
-
 function closeDrawer() {
   drawerVisible.value = false
   selectedCompany.value = null
@@ -452,16 +411,6 @@ const entryDetails = ref([])
 const loadingEntries = ref(false)
 const entriesError = ref(null)
 
-/**
- * Round a number to `n` decimal places.
- */
-function roundDecimals(num, n = 1) {
-  return Number(num).toFixed(n)
-}
-
-/**
- * Truncate a string to `max` chars, adding “…” if it was longer.
- */
 function truncate(text = '', max = 30) {
   return text.length > max ? text.slice(0, max) + '…' : text
 }
@@ -471,14 +420,10 @@ async function fetchEntryDetails(ids = []) {
     entryDetails.value = []
     return
   }
-
   loadingEntries.value = true
   entriesError.value = null
   try {
-    // uses ?ids=uuid1&ids=uuid2…
-    const { data } = await api.get('/reports/time-entry-detail', {
-      params: { ids }
-    })
+    const { data } = await api.get('/reports/time-entry-detail', { params: { ids } })
     entryDetails.value = data
   } catch (err) {
     entriesError.value = err.response?.data?.message || err.message
@@ -498,27 +443,19 @@ async function fetchDetails(company) {
   loadingDetails.value = true
   detailsError.value = null
   details.value = {}
-  // clear old PDF if you use one
   pdfUrl.value = ''
 
   try {
     const params = {
       company_id: company.company_id,
-      // period format “MM-YYYY” like your main report
       period: `${selectedMonth.value}-${selectedYear.value}`,
       months: selectedNumPeriods.value,
       include_logs: true,
       entry_type: 'Retained',
-      // only include this param if your toggle is on
       ...(exemptTravel.value && { exclude_tag: 'Allowable travel time' })
     }
-
     const { data } = await api.get('/reports/company-usage', { params })
-
-    // API should return { total_time, average, sla, percentage_usage,
-    //          period_totals, current_period_logs, [pdf_url?] }
     details.value = data
-    // if your payload includes a PDF link under a different key, adjust here:
     if (data.pdf_url) pdfUrl.value = data.pdf_url
   } catch (err) {
     detailsError.value = err.response?.data?.message || err.message
@@ -527,96 +464,95 @@ async function fetchDetails(company) {
   }
 }
 
-// Compute footer metrics
-// 1) Who is eligible (over their SLA this month AND over on average)
-const eligible = computed(() =>
-  sortedCompanies.value.filter(item =>
-    item.monthVariation > 0 && item.totalVariation > 0
-  )
-)
-
+// Period labels for drawer
 const periodLabels = computed(() => {
-  return (details.value.periods || []).map(([, endIso]) => {
+  const periods = details.value.period || details.value.periods || []
+  return periods.map(([, endIso], idx) => {
+    if (!endIso) return `Month ${idx + 1}`
     const d = new Date(endIso)
-    return d.toLocaleString('en-GB', {
-      month: 'long',
-      year: 'numeric'
-    })
+    return d.toLocaleString('en-GB', { month: 'long', year: 'numeric' })
   })
 })
 
+// Build rows from API
+const rows = computed(() => {
+  return (companies.value || []).map(c => {
+    const name = c.company_raw?.name ?? 'Unknown'
+    const sla = Number(c.sla) || 0
+    const usageArr = Array.isArray(c.period_usage) ? c.period_usage : []
+    const latestIdx = usageArr.length ? usageArr.length - 1 : 0 // newest bucket
+    const monthUsage = Number(usageArr[latestIdx] || 0)
+    const totalUsage = Number(c.total_usage) || usageArr.reduce((s, v) => s + (Number(v) || 0), 0)
+    const monthVariation = monthUsage - sla
+    const totalSla = sla * Number(selectedNumPeriods.value || 0)
+    const totalVariation = totalUsage - totalSla
+    const monthPct = sla > 0 ? (monthUsage / sla) * 100 : NaN
+    const utilisationPct = (totalUsage / totalSla) * 100
 
-const filteredCompanies = computed(() => {
-  return sortedCompanies.value.filter(item => item.monthVariation > 0)
-    .filter(item => {
-      const q = searchQuery.value.trim().toLowerCase()
-      return !q || item.name.toLowerCase().includes(q)
-    })
+
+    return {
+      company_id: c.company_id,
+      name,
+      sla,
+      monthUsage,
+      monthPct,
+      monthVariation,
+      totalSla,
+      totalUsage,
+      totalVariation,
+      utilisationPct
+    }
+  })
 })
 
+// Sorting + filtering
+const sortKey = ref('monthVariation')  // default sort
+const sortDir = ref('desc')            // 'asc' | 'desc'
 
-// 2) How many
-const eligibleCount = computed(() => eligible.value.length)
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortDir.value = 'desc'
+  }
+}
 
-// 3) Sum up their overcharges: hourlyRate * monthVariation
-const totalOvercharge = computed(() =>
-  sortedCompanies.value.reduce((sum, item) => {
-    if (Number.isFinite(item.charge) && item.charge > 0) {
-      return sum + item.charge
+const sortedFilteredRows = computed(() => {
+  // filter by search
+  const q = (searchQuery.value || '').toLowerCase().trim()
+  const filtered = q
+    ? rows.value.filter(r => r.name?.toLowerCase().includes(q))
+    : rows.value.slice()
+
+  // sort
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  const key = sortKey.value
+  return filtered.sort((a, b) => {
+    const va = a[key]
+    const vb = b[key]
+
+    // string vs number handling
+    if (typeof va === 'string' || typeof vb === 'string') {
+      return String(va).localeCompare(String(vb)) * dir
     }
-    return sum
-  }, 0)
-)
 
-// Format currency
-const formatter = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' })
-function formatCurrency(value) {
-  return formatter.format(value)
-}
-
-function sumUsage(arr) {
-  return arr.reduce((sum, v) => sum + (v || 0), 0)
-}
-
-// Enriched & sorted data
-const sortedCompanies = computed(() => {
-  return companies.value
-    .map(c => {
-      const monthUsage = c.period_usage.slice(-1)[0] || 0
-      const totalUsage = c.period_usage.reduce((sum, v) => sum + (v || 0), 0)
-      const monthVariation = monthUsage - c.sla
-      const totalSla = c.sla * selectedNumPeriods.value
-      const totalVariation = totalUsage - totalSla
-      const hourlyRate = Number(c.company_raw.income_per_month) / c.sla
-
-      // **New** charge calculation
-      const charge = hourlyRate * monthVariation
-
-      return {
-        company_id: c.company_id,
-        name: c.company_raw.name,
-        sla: c.sla,
-        monthUsage,
-        monthVariation,
-        totalUsage,
-        totalVariation,
-        hourlyRate,
-        charge
-      }
-    })
-    .sort((a, b) => b.monthVariation - a.monthVariation)
+    const na = Number.isFinite(va) ? va : -Infinity
+    const nb = Number.isFinite(vb) ? vb : -Infinity
+    if (na === nb) return 0
+    return na > nb ? dir : -dir
+  })
 })
 
 async function fetchReport() {
-  console.log(import.meta.env)
   if (!selectedMonth.value || !selectedYear.value) return
   loading.value = true
   error.value = null
   const period = `${selectedMonth.value}-${selectedYear.value}`
   try {
-    const params = { period, num_periods: selectedNumPeriods.value, filter_monthly: true, entry_type: "Retained" }
+    const params = { period, debug: true, num_months: selectedNumPeriods.value, entry_type: 'Retained' }
     if (exemptTravel.value) params.exclude_tag = 'Allowable travel time'
-    const { data } = await api.get('/reports/over-sla', { params })
+    const { data } = await api.get('/reports/usage-and-gaps', { params })
     companies.value = data
   } catch (err) {
     error.value = err.response?.data?.message || err.message || 'Failed to load data'

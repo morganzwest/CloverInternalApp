@@ -3,8 +3,7 @@ from dateutil.relativedelta import relativedelta
 from collections import defaultdict
 from app.supabase.client import supabase
 from dateutil.parser import isoparse
-from fastapi import APIRouter, Query, HTTPException, Response
-from datetime import datetime, date, timezone, time, timedelta
+from fastapi import APIRouter, Query, HTTPException, Response, Depends
 from dateutil.parser import isoparse
 from fastapi import BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -14,8 +13,19 @@ from pydantic import Field, BaseModel
 from httpx import RemoteProtocolError
 from typing import Optional, List, Dict
 from app.services.hubspot import fetch_all_users, map_owner_ids_to_users
+from httpx import RemoteProtocolError
+from postgrest.exceptions import APIError  # NEW
+from datetime import datetime, date, timezone, time, timedelta
+import time as time_module
 
-router = APIRouter(prefix="/reports", tags=["Reports"])
+router = APIRouter(prefix="/reports",
+                   tags=["Reports"])
+
+
+def dbg(enabled: bool, *args):
+    if enabled:
+        print("[DEBUG usage-and-gaps]", *args)
+
 
 class EmployeePayroll(BaseModel):
     owner_id: int = Field(..., description="ID of the time‑entry owner")
@@ -78,8 +88,14 @@ def get_cutoff_windows(month_year: str, num_periods: int):
     return windows
 
 
-def fetch_all_entries(base_query, order_column="id"):
+def fetch_all_entries(base_query, order_column="id", max_retries=3, log_prefix="[DEBUG]"):
+    """
+    Page through results with ordering + range pagination.
+    Retries on network errors and PostgREST statement timeout (57014).
+    Emits concise debug logs about paging.
+    """
     all_rows, offset, page_size = [], 0, 1000
+    page_idx = 0
 
     while True:
         q = (
@@ -87,19 +103,51 @@ def fetch_all_entries(base_query, order_column="id"):
             .order(order_column, desc=False)
             .range(offset, offset + page_size - 1)
         )
-        try:
-            batch = q.execute().data or []
-        except RemoteProtocolError:
-            # cut the page size in half and retry
-            page_size = max(10, page_size // 2)
-            continue
+
+        attempt = 0
+        while True:
+            try:
+                batch = q.execute().data or []
+                print(
+                    f"{log_prefix} page={page_idx} offset={offset} size={page_size} rows={len(batch)}")
+                break
+            except RemoteProtocolError:
+                attempt += 1
+                page_size = max(50, page_size // 2)
+                print(
+                    f"{log_prefix} RemoteProtocolError: retry {attempt}/{max_retries}, new_page_size={page_size}")
+                if attempt >= max_retries:
+                    raise
+                q = base_query.order(order_column, desc=False).range(
+                    offset, offset + page_size - 1)
+                continue
+            except APIError as e:
+                payload = e.args[0] if e.args else {}
+                code = payload.get("code") if isinstance(
+                    payload, dict) else None
+                if code == "57014":  # statement timeout
+                    attempt += 1
+                    page_size = max(50, page_size // 2)
+                    backoff = min(0.25 * (2 ** (attempt - 1)), 2.0)
+                    print(
+                        f"{log_prefix} timeout 57014: retry {attempt}/{max_retries}, sleep={backoff:.2f}s, new_page_size={page_size}")
+                    if attempt >= max_retries:
+                        raise
+                    time_module.sleep(backoff)
+                    q = base_query.order(order_column, desc=False).range(
+                        offset, offset + page_size - 1)
+                    continue
+                # Other API errors -> surface
+                raise
 
         if not batch:
             break
 
         all_rows.extend(batch)
         offset += page_size
+        page_idx += 1
 
+    print(f"{log_prefix} total_rows={len(all_rows)} pages={page_idx}")
     return all_rows
 
 
@@ -666,21 +714,28 @@ def company_report_pdf(
     except Exception as e:
         raise HTTPException(500, f"Error generating PDF: {e}")
 
+
 class User(BaseModel):
     id: int
     email: Optional[str]
     firstName: Optional[str]
     lastName: Optional[str]
 
+
 class OwnerMeta(BaseModel):
-    contracted_hours: float = Field(..., description="Contracted hours per period")
-    hourly_rate: Optional[float] = Field(None, description="Standard hourly rate")
-    eligible_for_overtime: bool = Field(..., description="Whether owner is eligible for overtime")
+    contracted_hours: float = Field(...,
+                                    description="Contracted hours per period")
+    hourly_rate: Optional[float] = Field(
+        None, description="Standard hourly rate")
+    eligible_for_overtime: bool = Field(...,
+                                        description="Whether owner is eligible for overtime")
+
 
 class PayrollWithUsers(BaseModel):
     payroll: List[EmployeePayroll]
     users: Dict[int, Optional[User]]
     owners: Dict[int, Optional[OwnerMeta]]
+
 
 @router.get(
     "/payroll/employees",
@@ -693,12 +748,14 @@ def payroll_employees(
 ):
     # Validate dates
     start_dt = parse_date(start_date)
-    end_dt   = parse_date(end_date)
+    end_dt = parse_date(end_date)
     if end_dt < start_dt:
         raise HTTPException(400, "`end_date` must be on or after `start_date`")
 
     # Build an inclusive end‑of‑day timestamp for end_date
-    end_of_day = datetime.combine(end_dt, time(23, 59, 59, tzinfo=timezone.utc))
+    end_of_day = datetime.combine(
+        end_dt, time(23, 59, 59, tzinfo=timezone.utc)
+    )
 
     # 1) Page through ALL matching entries from Supabase
     all_entries = []
@@ -708,13 +765,13 @@ def payroll_employees(
     while True:
         batch = (
             supabase
-              .table("time_entries")
-              .select("owner_id, hours")
-              .order("id", desc=False)
-              .gte("start_time", start_dt.isoformat())
-              .lte("start_time", end_of_day.isoformat())
-              .range(offset, offset + page_size - 1)
-              .execute()
+            .table("time_entries")
+            .select("owner_id, hours")
+            .order("id", desc=False)
+            .gte("start_time", start_dt.isoformat())
+            .lte("start_time", end_of_day.isoformat())
+            .range(offset, offset + page_size - 1)
+            .execute()
         ).data or []
 
         if not batch:
@@ -731,7 +788,8 @@ def payroll_employees(
             totals[oid] += float(e.get("hours") or 0)
 
     payroll_list = [
-        EmployeePayroll(owner_id=oid, totalTime=hrs, expenses=0.0, contracted=0.0)
+        EmployeePayroll(owner_id=oid, totalTime=hrs,
+                        expenses=0.0, contracted=0.0)
         for oid, hrs in totals.items()
     ]
 
@@ -752,10 +810,10 @@ def payroll_employees(
 
     owner_meta_res = (
         supabase
-          .table("owners")
-          .select("hubspot_id, contracted_hours, hourly_rate, eligible_for_overtime")
-          .in_("hubspot_id", owner_ids)
-          .execute()
+        .table("owners")
+        .select("hubspot_id, contracted_hours, hourly_rate, eligible_for_overtime")
+        .in_("hubspot_id", owner_ids)
+        .execute()
     )
     meta_list = owner_meta_res.data or []
     owner_meta_map = {m["hubspot_id"]: m for m in meta_list}
@@ -766,7 +824,8 @@ def payroll_employees(
         if m:
             owners_map[oid] = OwnerMeta(
                 contracted_hours=float(m.get("contracted_hours") or 0),
-                hourly_rate=(float(m.get("hourly_rate")) if m.get("hourly_rate") is not None else None),
+                hourly_rate=(float(m.get("hourly_rate")) if m.get(
+                    "hourly_rate") is not None else None),
                 eligible_for_overtime=bool(m.get("eligible_for_overtime"))
             )
         else:
@@ -778,11 +837,13 @@ def payroll_employees(
         owners=owners_map
     )
 
+
 class LastSyncResponse(BaseModel):
     last_sync: datetime = Field(
-        ..., 
+        ...,
         description="Most recent `last_updated` timestamp from the `time_entries` table (UTC)"
     )
+
 
 @router.get(
     "/last_sync",
@@ -807,13 +868,198 @@ def get_last_sync():
 
     raw_ts = rows[0].get("updated_at")
     if not raw_ts:
-        raise HTTPException(status_code=500, detail="Malformed `updated_at` value")
+        raise HTTPException(
+            status_code=500, detail="Malformed `updated_at` value")
 
     # 2) Parse & normalize to UTC datetime
     try:
         ts = isoparse(raw_ts).astimezone(timezone.utc)
     except Exception:
-        raise HTTPException(status_code=500, detail=f"Invalid timestamp format: {raw_ts}")
+        raise HTTPException(
+            status_code=500, detail=f"Invalid timestamp format: {raw_ts}")
 
     # 3) Return
     return LastSyncResponse(last_sync=ts)
+
+
+@router.get(
+    "/usage-and-gaps",
+    summary="All customer companies with per-period usage (includes zero-usage)"
+)
+def usage_and_gaps(
+    period: str = Query(..., description="MM-YYYY, e.g. '06-2025'"),
+    num_months: int = Query(6, ge=1, le=12),
+    entry_type: Optional[str] = Query(
+        None, description="Optional entry_type filter"),
+    exclude_tag: Optional[str] = Query(
+        None, description="Optional tag to exclude"),
+    # diagnostics
+    debug: bool = Query(False),
+    debug_company_id: Optional[int] = Query(
+        None, description="Log focus on this company id"),
+):
+    logpfx = "[DEBUG usage-and-gaps]"
+    # 1) Windows oldest→newest (inclusive end)
+    try:
+        windows = [get_period_range(period, offset)
+                   for offset in range(num_months - 1, -1, -1)]
+    except Exception:
+        raise HTTPException(
+            400, detail="Invalid period format; expected MM-YYYY")
+
+    oldest_start_iso, _ = windows[0]
+    _, newest_end_iso = windows[-1]
+
+    dbg(debug, f"period={period} num_months={num_months}")
+    for i, (s, e) in enumerate(windows):
+        dbg(debug, f"window[{i}] {s} -> {e}")
+    dbg(debug, f"overall_range {oldest_start_iso} .. {newest_end_iso}")
+    if entry_type:
+        dbg(debug, f"filter entry_type={entry_type}")
+    if exclude_tag:
+        dbg(debug, f"filter exclude_tag={exclude_tag}")
+    if debug_company_id is not None:
+        dbg(debug, f"focus company_id={debug_company_id}")
+
+    # 2) Company population (customer + active)
+    cust_q = (
+        supabase.table("hubspot_companies")
+        .select("hubspot_id, hours_per_month, raw, lifecycle_stage, status")
+        .ilike("lifecycle_stage", "customer")
+        .eq("status", "Active")
+    )
+    customers = cust_q.execute().data or []
+    if not customers:
+        dbg(debug, "no customers found")
+        return []
+
+    meta = {
+        int(c["hubspot_id"]): {
+            "sla": float(c.get("hours_per_month") or 0),
+            "raw": c.get("raw", {})
+        } for c in customers
+    }
+    customer_ids = list(meta.keys())
+    dbg(debug, f"customers_found={len(customers)} in_meta={len(customer_ids)} contains_target={debug_company_id in meta if debug_company_id else 'n/a'}")
+
+    # 3) Entries query (paged) — inclusive range, optional filters
+    base_query = (
+        supabase.table("time_entries")
+        .select("id, company_hubspot_id, hours, start_time, end_time, tag, entry_type")
+        .in_("company_hubspot_id", customer_ids)
+        .gte("start_time", oldest_start_iso)
+        .lte("start_time", newest_end_iso)
+    )
+    if exclude_tag:
+        base_query = base_query.neq("tag", exclude_tag)
+    if entry_type:
+        base_query = base_query.eq("entry_type", entry_type)
+
+    dbg(debug,
+        f"querying time_entries with ids={len(customer_ids)} gte={oldest_start_iso} lte={newest_end_iso}")
+    entries = fetch_all_entries(
+        base_query, order_column="id", max_retries=3, log_prefix=logpfx)
+
+    dbg(debug, f"entries_total={len(entries)}")
+
+    # 3a) Global min/max timestamps to validate range
+    if entries:
+        try:
+            mins = min(e["start_time"] for e in entries if e.get("start_time"))
+            maxs = max(e["start_time"] for e in entries if e.get("start_time"))
+            dbg(debug, f"entries_start_time_range min={mins} max={maxs}")
+        except Exception:
+            pass
+
+    # 3b) Raw per-company total from unbucketed entries for cross-check
+    raw_totals = defaultdict(float)
+    target_rows = 0
+    for e in entries:
+        cid_raw = e.get("company_hubspot_id")
+        try:
+            cid = int(cid_raw) if cid_raw is not None else None
+        except Exception:
+            continue
+        hrs = float(e.get("hours") or 0)
+        raw_totals[cid] += hrs
+        if debug_company_id is not None and cid == debug_company_id:
+            target_rows += 1
+            if target_rows <= 10:  # sample
+                dbg(debug,
+                    f"target row id={e.get('id')} start={e.get('start_time')} hrs={hrs} tag={e.get('tag')} type={e.get('entry_type')}")
+
+    if debug_company_id is not None:
+        dbg(debug,
+            f"target raw_total_hours={raw_totals.get(debug_company_id, 0.0)} from_rows={target_rows}")
+
+    # 4) Bucket per window (inclusive end)
+    usage_by_company = defaultdict(lambda: [0.0] * num_months)
+    parsed_windows = [(isoparse(s), isoparse(e)) for (s, e) in windows]
+
+    miss_in_meta = 0
+    not_bucketed = 0
+
+    for e in entries:
+        cid_raw = e.get("company_hubspot_id")
+        try:
+            cid = int(cid_raw) if cid_raw is not None else None
+        except Exception:
+            continue
+        if cid not in meta:
+            miss_in_meta += 1
+            continue
+
+        st = e.get("start_time")
+        if not st:
+            continue
+        dt_utc = isoparse(st).astimezone(timezone.utc)
+        hrs = float(e.get("hours") or 0)
+
+        placed = False
+        for idx, (ws, we) in enumerate(parsed_windows):
+            if ws <= dt_utc <= we:
+                usage_by_company[cid][idx] += hrs
+                placed = True
+                if debug_company_id is not None and cid == debug_company_id:
+                    dbg(debug,
+                        f"bucket company={cid} entry={e.get('id')} dt={dt_utc.isoformat()} -> idx={idx} +{hrs}")
+                break
+        if not placed:
+            not_bucketed += 1
+            if debug_company_id is not None and cid == debug_company_id:
+                dbg(debug,
+                    f"OUTSIDE WINDOWS company={cid} entry={e.get('id')} dt={dt_utc.isoformat()}")
+
+    dbg(debug,
+        f"entries_missing_meta={miss_in_meta} entries_not_bucketed={not_bucketed}")
+
+    # 5) Build result for ALL customers
+    result = []
+    for cid in customer_ids:
+        sla = meta[cid]["sla"]
+        usage_list = usage_by_company.get(cid, [0.0] * num_months)
+        total_usage = sum(usage_list)
+        average_usage = total_usage / num_months if num_months else 0.0
+        pct_usage = (average_usage / sla * 100) if sla > 0 else None
+
+        row = {
+            "company_id": cid,
+            "sla": sla,
+            "periods": [(s, e) for s, e in windows],
+            "period_usage": usage_list,
+            "total_usage": total_usage,
+            "average_usage": average_usage,
+            "percentage_usage": pct_usage,
+            "missing_sla": sla == 0,
+            "company_raw": meta[cid]["raw"],
+            # new: sanity field
+            "raw_total_hours_in_range": raw_totals.get(cid, 0.0),
+        }
+        result.append(row)
+
+        if debug_company_id is not None and cid == debug_company_id:
+            dbg(debug,
+                f"RESULT company={cid} sla={sla} usage_list={usage_list} total={total_usage} avg={average_usage} pct={pct_usage} raw_total={row['raw_total_hours_in_range']}")
+
+    dbg(debug, f"result_count={len(result)}")
+    return result
