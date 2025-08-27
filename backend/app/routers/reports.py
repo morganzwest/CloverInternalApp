@@ -689,7 +689,7 @@ def companies_over_sla(
 def company_report_pdf(
     company_id: int,
     period: str = Query("06-2025", description="MM-YYYY"),
-    months: int = Query(6, ge=1, le=12),
+    months: int = Query(6, ge=1, le=36),
     exclude_tag: str = Query(None, description="Optional tag to exclude"),
     entry_type: str = Query(None, description="Optional entry_type filter"),
 ):

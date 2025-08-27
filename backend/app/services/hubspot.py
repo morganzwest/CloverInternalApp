@@ -6,6 +6,8 @@ from app.supabase.client import supabase
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
+import math
+
 
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 BASE_URL = "https://api.hubapi.com"
@@ -27,6 +29,24 @@ HEADERS = {
 }
 
 
+def as_float(v, default=0.0):
+    if v is None:
+        return default
+    try:
+        return float(str(v).strip().replace(",", "."))
+    except ValueError:
+        return default
+
+
+def as_int(v, default=0, mode="round"):
+    x = as_float(v, default)
+    if mode == "floor":
+        return math.floor(x)
+    if mode == "ceil":
+        return math.ceil(x)
+    return int(round(x))
+
+
 def fetch_all_companies(limit: int = 100) -> List[Dict]:
     print("[fetch_all_companies] Starting fetch_all_companies with limit =", limit)
     property_names = get_company_property_names()
@@ -39,7 +59,7 @@ def fetch_all_companies(limit: int = 100) -> List[Dict]:
     while url:
         print(
             f"[fetch_all_companies] Fetching page {page}: {url} with params {params}")
-        res = requests.get(url, headers=HEADERS, params=params)
+        res = session.get(url, headers=HEADERS, params=params)
         res.raise_for_status()
         data = res.json()
         batch = data.get("results", [])
@@ -61,7 +81,7 @@ def get_time_entry_property_names() -> List[str]:
     schema_id = "2-142987565"  # objectTypeId found in your payload
     url = f"{BASE_URL}/crm/v3/schemas/{schema_id}"
     print(f"[get_time_entry_property_names] GET {url}")
-    res = requests.get(url, headers=HEADERS)
+    res = session.get(url, headers=HEADERS)
     res.raise_for_status()
     data = res.json()
     props = data.get("properties", [])
@@ -156,6 +176,7 @@ def upsert_companies_to_supabase(companies: List[Dict]) -> None:
 
     print("[upsert_companies_to_supabase] Upsert complete.")
 
+
 def map_owner_ids_to_users(
     owner_ids: List[int], users: List[Dict]
 ) -> Dict[int, Optional[Dict]]:
@@ -173,6 +194,8 @@ def map_owner_ids_to_users(
     return mapping
 
 # 1) Raw HubSpot fetch—no inserts here
+
+
 def _raw_fetch_all_users(limit: int = 100) -> List[Dict]:
     print(f"[_raw_fetch_all_users] Starting fetch with page size {limit}")
     url = f"{BASE_URL}/crm/v3/owners"
@@ -184,7 +207,8 @@ def _raw_fetch_all_users(limit: int = 100) -> List[Dict]:
             print(f"[ _raw_fetch_all_users] GET {url} params={params}")
             res = session.get(url, headers=HEADERS, params=params)
             if res.status_code == 403:
-                print("[_raw_fetch_all_users] ⚠️ 403 Forbidden – skipping owner fetch")
+                print(
+                    "[_raw_fetch_all_users] ⚠️ 403 Forbidden – skipping owner fetch")
                 return []
             res.raise_for_status()
             data = res.json()
@@ -199,8 +223,10 @@ def _raw_fetch_all_users(limit: int = 100) -> List[Dict]:
         print(f"[_raw_fetch_all_users] ⚠️ Error fetching users: {e}")
         return []
 
-    print(f"[_raw_fetch_all_users] Completed fetch: {len(results)} total users")
+    print(
+        f"[_raw_fetch_all_users] Completed fetch: {len(results)} total users")
     return results
+
 
 def insert_new_owners_to_supabase(
     users: List[Dict], chunk_size: int = 100
@@ -216,14 +242,17 @@ def insert_new_owners_to_supabase(
 
     # 1) Build default owner records
     records = [
-        {"hubspot_id": int(u["id"]), "contracted_hours": 0, "hourly_rate": None}
+        {"hubspot_id": int(u["id"]), "contracted_hours": 0,
+         "hourly_rate": None}
         for u in users
     ]
 
     # 2) Fetch existing IDs from Supabase
-    existing = supabase.table("owners").select("hubspot_id").execute().data or []
+    existing = supabase.table("owners").select(
+        "hubspot_id").execute().data or []
     existing_ids = {r["hubspot_id"] for r in existing}
-    print(f"[insert_new_owners_to_supabase] Found {len(existing_ids)} existing owners")
+    print(
+        f"[insert_new_owners_to_supabase] Found {len(existing_ids)} existing owners")
 
     # 3) Filter out ones we already have
     new_records = [r for r in records if r["hubspot_id"] not in existing_ids]
@@ -231,20 +260,24 @@ def insert_new_owners_to_supabase(
         print("[insert_new_owners_to_supabase] No new owners to insert")
         return 0
 
-    print(f"[insert_new_owners_to_supabase] Inserting {len(new_records)} new owners...")
+    print(
+        f"[insert_new_owners_to_supabase] Inserting {len(new_records)} new owners...")
 
     # 4) Insert in chunks
     inserted = 0
     for i in range(0, len(new_records), chunk_size):
-        chunk = new_records[i : i + chunk_size]
+        chunk = new_records[i: i + chunk_size]
         try:
             supabase.table("owners").insert(chunk).execute()
             inserted += len(chunk)
-            print(f"[insert_new_owners_to_supabase] → Inserted chunk {i//chunk_size+1} ({len(chunk)} records)")
+            print(
+                f"[insert_new_owners_to_supabase] → Inserted chunk {i//chunk_size+1} ({len(chunk)} records)")
         except Exception as e:
-            print(f"[insert_new_owners_to_supabase] ❌ Failed to insert chunk {i//chunk_size+1}: {e}")
+            print(
+                f"[insert_new_owners_to_supabase] ❌ Failed to insert chunk {i//chunk_size+1}: {e}")
 
-    print(f"[insert_new_owners_to_supabase] Done. Total new owners inserted: {inserted}")
+    print(
+        f"[insert_new_owners_to_supabase] Done. Total new owners inserted: {inserted}")
     return inserted
 
 
@@ -257,7 +290,6 @@ def fetch_all_users(limit: int = 100) -> List[Dict]:
     if users:
         insert_new_owners_to_supabase(users)
     return users
-
 
 
 def fetch_all_time_entries(limit: int = 100) -> List[Dict]:
@@ -277,7 +309,7 @@ def fetch_all_time_entries(limit: int = 100) -> List[Dict]:
     while url:
         print(
             f"[fetch_all_time_entries] Fetching page {page}: {url} with params {params}")
-        res = requests.get(url, headers=HEADERS, params=params)
+        res = session.get(url, headers=HEADERS, params=params)
         res.raise_for_status()
         data = res.json()
         batch = data.get("results", [])
@@ -312,8 +344,8 @@ def upsert_time_entries_to_supabase(entries: List[Dict]) -> None:
             if entry.get("associations", {}).get("companies", {}).get("results") else None,
             "start_time": props.get("start_time"),
             "end_time": props.get("end_time"),
-            "hours": float(props.get("time_spent___hours") or 0),
-            "minutes": int(props.get("time_spent___minutes") or 0),
+            "hours": as_float(props.get("time_spent___hours")),
+            "minutes": as_int(props.get("time_spent___minutes"), mode="round"),
             "entry_type": props.get("entry_type"),
             "description": props.get("description"),
             "tag": props.get("tag"),
