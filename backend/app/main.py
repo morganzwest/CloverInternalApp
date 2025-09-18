@@ -2,6 +2,7 @@
 
 import sys
 import asyncio
+import os
 
 # ── 1) On Windows, switch to the Proactor loop so asyncio.create_subprocess_exec works ──
 if sys.platform == "win32":
@@ -19,13 +20,9 @@ origins = [
     "https://internal.cloverhr.co.uk",
 
 ]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+allow_all = os.getenv("PACKAGED") == "1"
+app.add_middleware(CORSMiddleware, allow_origins=["*"] if allow_all else origins,
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 app.include_router(hubspot.router)
 app.include_router(companies.router)

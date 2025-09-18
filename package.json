@@ -1,0 +1,50 @@
+{
+  "name": "cloverinternal",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:frontend\" \"npm:dev:electron\"",
+    "dev:frontend": "cd frontend && vite --port 5173 --strictPort",
+    "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build": "npm run build:frontend && electron-builder"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
+    "concurrently": "^9",
+    "cross-env": "^7",
+    "electron": "^31",
+    "electron-builder": "^24",
+    "wait-on": "^7"
+  },
+  "build": {
+    "appId": "co.clover.internal",
+    "files": [
+      "electron/**",
+      "frontend/dist/**",
+      "frontend/app/templates/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist",
+        "to": "api"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true
+    }
+  },
+  "dependencies": {
+    "get-port": "^7.1.0",
+    "keytar": "^7.9.0"
+  }
+}

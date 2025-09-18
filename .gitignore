@@ -1,0 +1,74 @@
+# --- Secrets / env ---
+.env
+.env.*
+*.env
+*.env.*
+**/.env
+**/.env.*
+
+# --- Node / Vue / Electron ---
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vite/
+frontend/dist/
+dist/
+out/
+release/
+electron/*.map
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.mypy_cache/
+.pytest_cache/
+.pyre/
+.pytype/
+.tox/
+.nox/
+.coverage*
+htmlcov/
+.coverage.*
+pip-wheel-metadata/
+
+# Virtualenvs
+venv/
+.venv/
+env/
+ENV/
+
+# PyInstaller / build artifacts
+backend/build/
+backend/dist/
+*.spec
+
+# Optional Playwright cache
+ms-playwright/
+
+# --- Logs ---
+logs/
+*.log
+*.log.*
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.iml
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+.Spotlight-V100
+.fseventsd
+
+# --- Misc caches ---
+*.cache
+.cache/
+.tmp/
+temp/
+tmp/

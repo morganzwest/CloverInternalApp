@@ -1,7 +1,6 @@
 from app.supabase.client import supabase
 from collections import defaultdict
 from dateutil.relativedelta import relativedelta
-from playwright.sync_api import sync_playwright
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import io
@@ -13,10 +12,26 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 import datetime as dt_module
 import logging
 import traceback
+import os
+import sys
+import requests
+from pathlib import Path
 
 # force non-GUI rendering
 import matplotlib
 matplotlib.use('Agg')
+
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    APP_DIR = Path(sys._MEIPASS) / "app"
+else:
+    APP_DIR = Path(__file__).resolve().parent.parent
+
+TEMPLATES_DIR = APP_DIR / "templates"
+
+env = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)),
+    autoescape=select_autoescape(["html", "xml"])
+)
 
 
 class ReportsService:
@@ -123,7 +138,6 @@ class ReportsService:
 
     @staticmethod
     def build_pdf(data: dict) -> bytes:
-        # prepare context
         company = SimpleNamespace(**data["company_raw"])
         entries = [SimpleNamespace(**e) for e in data["entries"]]
         windows = data["windows"]
@@ -135,13 +149,10 @@ class ReportsService:
         total_diff = data.get("total_diff", 0)
         avg_util = data.get("avg_util", 0)
 
-        # build chart with taller aspect
         chart_png = ReportsService._render_chart_png(
             data["daily_totals"], windows)
 
-        # render HTML
-        env = Environment(loader=FileSystemLoader(
-            "app/templates"), autoescape=select_autoescape(["html", "xml"]))
+        # render HTML first
         tmpl = env.get_template("company_report.html")
         html = tmpl.render(
             company=company,
@@ -159,18 +170,26 @@ class ReportsService:
             avg_util=avg_util,
         )
 
+        # send to Electron PDF service
+        pdf_url = os.getenv("ELECTRON_PDF_URL")
+        if not pdf_url:
+            raise RuntimeError("ELECTRON_PDF_URL not set")
+
+        # allow relative URLs in template (css/img)
+        base_url = TEMPLATES_DIR.as_uri() + "/"
+
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch()
-                page = browser.new_page(
-                    viewport={"width": 1024, "height": 768})
-                page.set_content(html, wait_until="networkidle")
-                pdf_bytes = page.pdf(format="A4", print_background=True,
-                                     margin={"top": "1cm", "bottom": "1cm", "left": "1cm", "right": "1cm"})
-                browser.close()
-            return pdf_bytes
-        except Exception:
-            logging.error("PDF generation failed", exc_info=True)
+            r = requests.post(
+                pdf_url,
+                json={"html": html, "base": base_url,
+                      "options": {"landscape": False}},
+                timeout=60
+            )
+            r.raise_for_status()
+            return r.content
+        except requests.RequestException as e:
+            logging.error("PDF generation failed via Electron: %s",
+                          e, exc_info=True)
             raise
 
     @staticmethod
